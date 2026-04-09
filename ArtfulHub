@@ -1,0 +1,531 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "Artful Hub",
+   Icon = 0,
+   LoadingTitle = "AHub",
+   LoadingSubtitle = "By AHub Team",
+   Theme = "Default",
+
+   DisableRayfieldPrompts = false,
+   DisableBuildWarnings = false,
+
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = nil,
+      FileName = "ArtfulHub_Config"
+   },
+
+   Discord = {
+      Enabled = false,
+      Invite = "noinvitelink",
+      RememberJoins = true
+   },
+
+   KeySystem = false
+})
+
+----------------------------------------------------
+-- SERVICES & GLOBALS
+----------------------------------------------------
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local AntiSlow = false
+local JumpEnabled = false
+local JumpGui
+local SpeedBoost = false
+local SPEED_VALUE = 28
+
+local GlideHolding = false
+local GlideForce = 0.8
+
+local AutoCompleteTasks = false
+local InstantInteract = false
+local RemoveBadEffects = false
+local FullBrightEnabled = false
+local NoFogEnabled = false
+
+local ESPSettings = {
+   Killer = false,
+   Survivor = false,
+   Generator = false,
+   Page = false,
+   Bluetooth = false,
+   ElectricalBox = false,
+   TrowelWall = false
+}
+
+-- AIM BUTTON STATE
+local AimButtonEnabled = false
+local AimButtonGui = nil
+
+----------------------------------------------------
+-- LOOP SYSTEM
+----------------------------------------------------
+local function loop(interval, func)
+   task.spawn(function()
+      while true do
+         task.wait(interval)
+         pcall(func)
+      end
+   end)
+end
+
+----------------------------------------------------
+-- OBJECTIVES (fixed path)
+----------------------------------------------------
+local function getActiveObjectives()
+   local live = workspace:FindFirstChild("Live")
+   if not live then return nil end
+   local map = live:FindFirstChild("Map")
+   if not map then return nil end
+   local mapModel = map:FindFirstChild("MapModel") or map:FindFirstChild("Mapmodel")
+   if not mapModel then return nil end
+   return mapModel:FindFirstChild("ActiveObjectives")
+end
+
+----------------------------------------------------
+-- ESP FUNCTIONS
+----------------------------------------------------
+local function createESP(obj, color)
+   if not obj or obj:FindFirstChild("BaeHighlight") then return end
+   local h = Instance.new("Highlight")
+   h.Name = "BaeHighlight"
+   h.FillColor = color
+   h.OutlineColor = color
+   h.FillTransparency = 0.5
+   h.Parent = obj
+end
+
+local function removeESP(obj)
+   if obj and obj:FindFirstChild("BaeHighlight") then
+      obj.BaeHighlight:Destroy()
+   end
+end
+
+----------------------------------------------------
+-- GET VALID HIGH-HP TARGET
+----------------------------------------------------
+local function getValidHighHPTarget(maxDistance)
+   local closest = nil
+   local shortestDistance = math.huge
+   local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+   if not myRoot then return nil end
+
+   for _, obj in ipairs(workspace:GetDescendants()) do
+      local hum = obj:FindFirstChildOfClass("Humanoid")
+      if hum and hum.Health >= 100 then
+         local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+         if root then
+            local distance = (myRoot.Position - root.Position).Magnitude
+            if distance <= maxDistance and distance < shortestDistance then
+               shortestDistance = distance
+               closest = obj
+            end
+         end
+      end
+   end
+   return closest
+end
+
+----------------------------------------------------
+-- TABS
+----------------------------------------------------
+local MainTab = Window:CreateTab("Main", nil)
+local PlayerTab = Window:CreateTab("Player", nil)
+local CombatTab = Window:CreateTab("Combat", nil)
+local AutomationTab = Window:CreateTab("Automation", nil)
+local ExtraTab = Window:CreateTab("Extra", nil)
+local CreditsTab = Window:CreateTab("Credits", nil)
+local DiscordTab = Window:CreateTab("Discord", nil)
+
+----------------------------------------------------
+-- NOTIFICATION
+----------------------------------------------------
+Rayfield:Notify({
+   Title = "Loaded",
+   Content = "Artful Hub loaded.",
+   Duration = 4,
+})
+
+----------------------------------------------------
+-- PLAYER TAB - MOVEMENT
+----------------------------------------------------
+PlayerTab:CreateSection("Movement")
+
+PlayerTab:CreateToggle({
+   Name = "Speed Boost",
+   CurrentValue = false,
+   Callback = function(v) SpeedBoost = v end,
+})
+
+PlayerTab:CreateToggle({
+   Name = "Anti Slow",
+   CurrentValue = false,
+   Callback = function(v) AntiSlow = v end,
+})
+
+local function getHumanoid()
+   local char = LocalPlayer.Character
+   return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+-- FIXED: Speed Boost now reapplies on respawn
+RunService.Heartbeat:Connect(function()
+   local hum = getHumanoid()
+   if not hum then return end
+   if SpeedBoost then hum.WalkSpeed = SPEED_VALUE end
+   if AntiSlow and hum.WalkSpeed < SPEED_VALUE then hum.WalkSpeed = SPEED_VALUE end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+   task.wait(0.5)
+   local hum = getHumanoid()
+   if hum and SpeedBoost then hum.WalkSpeed = SPEED_VALUE end
+end)
+
+----------------------------------------------------
+-- PLAYER TAB - MOBILE JUMP + GLIDE
+----------------------------------------------------
+PlayerTab:CreateToggle({
+   Name = "Mobile Jump Button",
+   CurrentValue = false,
+   Callback = function(v)
+      JumpEnabled = v
+      if v then
+         local screenGui = Instance.new("ScreenGui")
+         screenGui.Name = "BaeJumpUI"
+         screenGui.ResetOnSpawn = false
+         screenGui.Parent = game.CoreGui
+
+         local button = Instance.new("TextButton")
+         button.Size = UDim2.new(0, 65, 0, 65)
+         button.Position = UDim2.new(0.8, 0, 0.7, 0)
+         button.BackgroundColor3 = Color3.fromRGB(30,30,30)
+         button.Text = "JUMP"
+         button.TextScaled = true
+         button.TextColor3 = Color3.new(1,1,1)
+         button.Parent = screenGui
+
+         Instance.new("UICorner", button).CornerRadius = UDim.new(1,0)
+
+         button.MouseButton1Click:Connect(function()
+            local hum = getHumanoid()
+            if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+         end)
+
+         button.MouseButton1Down:Connect(function() GlideHolding = true end)
+         button.MouseButton1Up:Connect(function() GlideHolding = false end)
+
+         task.spawn(function()
+            while screenGui.Parent do
+               task.wait()
+               if not GlideHolding then continue end
+               local char = LocalPlayer.Character
+               local hum = getHumanoid()
+               local root = char and char:FindFirstChild("HumanoidRootPart")
+               if hum and root and hum:GetState() == Enum.HumanoidStateType.Freefall then
+                  local vel = root.AssemblyLinearVelocity
+                  root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y * GlideForce, -8), vel.Z)
+               end
+            end
+         end)
+
+         JumpGui = screenGui
+      else
+         if JumpGui then JumpGui:Destroy() JumpGui = nil end
+      end
+   end,
+})
+
+PlayerTab:CreateSection("Stamina & Safety")
+
+local staminaConnection
+PlayerTab:CreateToggle({
+   Name = "Infinite Stamina",
+   CurrentValue = false,
+   Callback = function(Value)
+      if Value then
+         staminaConnection = RunService.Heartbeat:Connect(function()
+            local char = LocalPlayer.Character
+            if char then
+               local stm = char:FindFirstChild("Stamina") or char:FindFirstChild("Energy") or char:GetAttribute("Stamina")
+               if stm then
+                  local fakeValue = math.random(95, 100)
+                  if typeof(stm) == "Instance" then stm.Value = fakeValue else char:SetAttribute("Stamina", fakeValue) end
+               end
+            end
+         end)
+      else
+         if staminaConnection then staminaConnection:Disconnect() staminaConnection = nil end
+      end
+   end,
+})
+
+-- NEW: Low HP Safe TP (teleports to lobby when <= 20 HP)
+PlayerTab:CreateToggle({
+   Name = "Low HP Safe TP (<=20 HP → Lobby)",
+   CurrentValue = false,
+   Callback = function(v) LowHPSafeTP = v end,
+})
+
+RunService.Heartbeat:Connect(function()
+   if not LowHPSafeTP then return end
+   local hum = getHumanoid()
+   if hum and hum.Health <= 20 then
+      local live = workspace:FindFirstChild("Live")
+      local map = live and live:FindFirstChild("Map")
+      local lobby = map and (map:FindFirstChild("Lobby") or map:FindFirstChild("lobby"))
+      if lobby then
+         local safePart = lobby:FindFirstChildWhichIsA("BasePart") or lobby.PrimaryPart or lobby:FindFirstChild("Spawn")
+         if safePart then
+            local root = hum.Parent:FindFirstChild("HumanoidRootPart")
+            if root then
+               root.CFrame = safePart.CFrame + Vector3.new(0, 5, 0)
+               Rayfield:Notify({Title = "Safe TP", Content = "Teleported to lobby", Duration = 2})
+            end
+         end
+      end
+   end
+end)
+
+
+----------------------------------------------------
+-- COMBAT TAB - AIM BUTTON
+----------------------------------------------------
+CombatTab:CreateSection("Rifle Ability")
+
+CombatTab:CreateToggle({
+   Name = "Aim Button",
+   CurrentValue = false,
+   Callback = function(v)
+      AimButtonEnabled = v
+      if v then
+         AimButtonGui = Instance.new("ScreenGui")
+         AimButtonGui.Name = "ArtfulAimButton"
+         AimButtonGui.ResetOnSpawn = false
+         AimButtonGui.Parent = game.CoreGui
+
+         local aimButton = Instance.new("TextButton")
+         aimButton.Size = UDim2.new(0, 65, 0, 65)
+         aimButton.Position = UDim2.new(0.8, 0, 0.4, 0)
+         aimButton.BackgroundColor3 = Color3.fromRGB(30,30,30)
+         aimButton.Text = "AIM"
+         aimButton.TextScaled = true
+         aimButton.TextColor3 = Color3.new(1,1,1)
+         aimButton.Parent = AimButtonGui
+
+         Instance.new("UICorner", aimButton).CornerRadius = UDim.new(1,0)
+
+         local dragging = false
+         local dragStart, startPos
+         aimButton.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+               dragging = true
+               dragStart = input.Position
+               startPos = aimButton.Position
+            end
+         end)
+         aimButton.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+         end)
+         UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+               local delta = input.Position - dragStart
+               aimButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+         end)
+
+         aimButton.MouseButton1Click:Connect(function()
+            local target = getValidHighHPTarget(45)
+            if target then
+               local head = target:FindFirstChild("Head") or target:FindFirstChildWhichIsA("BasePart")
+               if head then
+                  Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, head.Position)
+                  Rayfield:Notify({Title = "Aimed!", Content = "Locked on 100+ HP target", Duration = 1.5})
+               end
+            else
+               Rayfield:Notify({Title = "No Target", Content = "No 100+ HP target within 45 studs", Duration = 2})
+            end
+         end)
+      else
+         if AimButtonGui then AimButtonGui:Destroy() AimButtonGui = nil end
+      end
+   end,
+})
+
+----------------------------------------------------
+-- FIXED ESP LOOP (high-HP player is now always red when Killer ESP on)
+----------------------------------------------------
+loop(1, function()
+   local activeObj = getActiveObjectives()
+
+   -- CLEANUP
+   for _, obj in ipairs(workspace:GetDescendants()) do
+      if obj:FindFirstChild("BaeHighlight") then
+         local n = obj.Name:lower()
+         local shouldKeep = false
+
+         if ESPSettings.Killer and obj:IsA("Model") and n:find("killer") then
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health >= 100 then shouldKeep = true end
+         end
+         if ESPSettings.Survivor and Players:GetPlayerFromCharacter(obj) then shouldKeep = true end
+         if ESPSettings.Generator and n:find("generator") then shouldKeep = true end
+         if ESPSettings.Page and n:find("page") then shouldKeep = true end
+         if ESPSettings.Bluetooth and n:find("bluetooth") then shouldKeep = true end
+         if ESPSettings.ElectricalBox and (n:find("electrical") or n:find("box")) then shouldKeep = true end
+         if ESPSettings.TrowelWall and obj:IsA("Model") and n:find("trowelwall") then shouldKeep = true end
+
+         if not shouldKeep then removeESP(obj) end
+      end
+   end
+
+   -- CREATE object ESPs
+   if activeObj then
+      for _, v in ipairs(activeObj:GetDescendants()) do
+         local n = v.Name:lower()
+         if ESPSettings.Generator and n:find("generator") then createESP(v, Color3.fromRGB(255,255,0)) end
+         if ESPSettings.Page and n:find("page") then createESP(v, Color3.fromRGB(255,255,255)) end
+         if ESPSettings.Bluetooth and n:find("bluetooth") then createESP(v, Color3.fromRGB(0,255,255)) end
+         if ESPSettings.ElectricalBox and (n:find("electrical") or n:find("box")) then createESP(v, Color3.fromRGB(255,170,0)) end
+         if ESPSettings.TrowelWall and v:IsA("Model") and n:find("trowelwall") then createESP(v, Color3.fromRGB(150,75,255)) end
+      end
+   end
+
+   -- PLAYERS: high-HP = red (Killer ESP), normal = green (Survivor ESP)
+   for _, player in ipairs(Players:GetPlayers()) do
+      if player ~= LocalPlayer and player.Character then
+         local char = player.Character
+         local hum = char:FindFirstChildOfClass("Humanoid")
+         local isHighHP = hum and hum.Health >= 100
+
+         if ESPSettings.Killer and isHighHP then
+            createESP(char, Color3.fromRGB(255,0,0))   -- red for 100+ HP
+         elseif ESPSettings.Survivor and not isHighHP then
+            createESP(char, Color3.fromRGB(0,255,0))   -- green only for normal players
+         end
+      end
+   end
+
+   -- extra killer model check (just in case)
+   for _, v in ipairs(workspace:GetDescendants()) do
+      if ESPSettings.Killer and v:IsA("Model") and v.Name:lower():find("killer") then
+         local hum = v:FindFirstChildOfClass("Humanoid")
+         if hum and hum.Health >= 100 then
+            createESP(v, Color3.fromRGB(255,0,0))
+         end
+      end
+   end
+end)
+
+----------------------------------------------------
+-- MAIN TAB - ESP TOGGLES
+----------------------------------------------------
+MainTab:CreateSection("ESP")
+
+MainTab:CreateToggle({Name="Killer ESP (100+ HP = red)", CurrentValue=false, Callback=function(v) ESPSettings.Killer = v end})
+MainTab:CreateToggle({Name="Survivor ESP", CurrentValue=false, Callback=function(v) ESPSettings.Survivor = v end})
+MainTab:CreateToggle({Name="Generator ESP", CurrentValue=false, Callback=function(v) ESPSettings.Generator = v end})
+MainTab:CreateToggle({Name="Page ESP", CurrentValue=false, Callback=function(v) ESPSettings.Page = v end})
+MainTab:CreateToggle({Name="Bluetooth ESP", CurrentValue=false, Callback=function(v) ESPSettings.Bluetooth = v end})
+MainTab:CreateToggle({Name="Electrical Box ESP", CurrentValue=false, Callback=function(v) ESPSettings.ElectricalBox = v end})
+MainTab:CreateToggle({Name="TrowelWall ESP", CurrentValue=false, Callback=function(v) ESPSettings.TrowelWall = v end})
+
+----------------------------------------------------
+-- AUTOMATION TAB
+----------------------------------------------------
+AutomationTab:CreateSection("Automation")
+
+AutomationTab:CreateToggle({Name="Auto Tasks", CurrentValue=false, Callback=function(v) AutoCompleteTasks = v end})
+AutomationTab:CreateToggle({Name="Instant Interact", CurrentValue=false, Callback=function(v) InstantInteract = v end})
+AutomationTab:CreateToggle({Name="Remove Effects", CurrentValue=false, Callback=function(v) RemoveBadEffects = v end})
+AutomationTab:CreateToggle({Name="Full Bright", CurrentValue=false, Callback=function(v) FullBrightEnabled = v end})
+AutomationTab:CreateToggle({Name="No Fog", CurrentValue=false, Callback=function(v) NoFogEnabled = v end})
+
+-- automation loops
+loop(1, function()
+   if not AutoCompleteTasks then return end
+   local activeObj = getActiveObjectives()
+   if not activeObj then return end
+   for _, obj in ipairs(activeObj:GetChildren()) do
+      local progress = obj:FindFirstChildWhichIsA("NumberValue")
+      if progress then progress.Value = 100 end
+      local done = obj:FindFirstChild("Completed")
+      if done then done.Value = true end
+   end
+end)
+
+loop(2, function()
+   if not InstantInteract then return end
+   local activeObj = getActiveObjectives()
+   if not activeObj then return end
+   for _, v in ipairs(activeObj:GetDescendants()) do
+      if v:IsA("ProximityPrompt") then v.HoldDuration = 0 end
+   end
+end)
+
+loop(2, function()
+   if not RemoveBadEffects then return end
+   local storage = game:GetService("ReplicatedStorage"):FindFirstChild("Storage")
+   local effectIndex = storage and storage:FindFirstChild("EffectIndex")
+   if not effectIndex then return end
+   for _, eff in ipairs(effectIndex:GetChildren()) do eff:Destroy() end
+end)
+
+loop(1, function()
+   if FullBrightEnabled then Lighting.Brightness = 3 Lighting.GlobalShadows = false end
+   if NoFogEnabled then Lighting.FogEnd = 100000 end
+end)
+
+----------------------------------------------------
+-- EXTRA TAB (all tools back)
+----------------------------------------------------
+ExtraTab:CreateSection("Tools")
+
+ExtraTab:CreateButton({
+   Name = "Infinite Yield",
+   Callback = function()
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+   end,
+})
+
+ExtraTab:CreateButton({
+   Name = "Dex Explorer",
+   Callback = function()
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/peyton2465/Dex/master/out.lua"))()
+   end,
+})
+
+ExtraTab:CreateButton({
+   Name = "Simple Spy",
+   Callback = function()
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua"))()
+   end,
+})
+
+----------------------------------------------------
+-- CREDITS & DISCORD
+----------------------------------------------------
+CreditsTab:CreateSection("Credits")
+CreditsTab:CreateLabel("Owner: Artful")
+CreditsTab:CreateLabel("Co-Owner: Forquet")
+CreditsTab:CreateLabel("Tester: 6v9x")
+
+local DiscordLink = "https://discord.gg/WcyKFx99rH"
+DiscordTab:CreateSection("Join our Discord")
+DiscordTab:CreateLabel("Invite: " .. DiscordLink)
+DiscordTab:CreateButton({
+   Name = "Copy Discord Link",
+   Callback = function()
+      if setclipboard then
+         setclipboard(DiscordLink)
+         Rayfield:Notify({Title = "Copied!", Content = "Discord link copied", Duration = 3})
+      end
+   end,
+})
